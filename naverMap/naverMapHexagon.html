@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no">
+    <title>네이버 지도 헥사곤 </title>
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+    <script type="text/javascript" src="https://openapi.map.naver.com/openapi/v3/maps.js?ncpClientId=mn7cwsrvym"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@5.1.6/turf.js"></script>
+
+</head>
+
+
+<body>
+
+
+<H2>네이버 지도 헥사곤으로 구현하기</H2>
+<ul>
+    <li>500미터로 헥사곤 구현</li>
+    <li>헥사곤 당 클릭이벤트</li>
+    <li>turfjs 사용</li>
+    <li>헥사곤 갯수를 한 화면에 표현하면 성능이슈가 있어 줌레벨 13까지 가능</li>
+</ul>
+<p></p>
+
+
+<div id="map" 
+style="display: block; margin: 0px; padding: 0px; border: 0px none; top: 0px; left: 0px; overflow: visible; width: 1000px; height: 500px; -webkit-tap-highlight-color: rgba(0, 0, 0, 0); z-index: 0;"></div>
+<script>
+
+// 참조문서
+// https://navermaps.github.io/maps.js.ncp/docs/tutorial-3-polygon-simple.example.html
+// https://stackoverflow.com/questions/7477003/calculating-new-longitude-latitude-from-old-n-meters
+// https://turfjs.org/docs/
+
+var radius = 0.5; // 키로미터, 정육각형의 반지름(정삼각형의 한변의 길이로 생각)
+var seoulMap = {lat: 37.5665, lng : 126.9780}; //서울 좌표 
+var triangleHeight = Math.sqrt(3)/ 2 * 500 // 정육면체의 삼각형의 높이 공식 === √3 ÷ 2 x (한변의 길이)
+
+var zoomNum = 13;
+// 네이버 api
+var map = new naver.maps.Map('map', {
+    center: new naver.maps.LatLng(seoulMap.lat, seoulMap.lng),
+    zoom: zoomNum,
+    minZoom: 12, // 축소 제한 
+    maxZoom : 15,  // 확대 제한 
+    mapTypeControl: true,
+    mapTypeControlOptions: {
+        style: naver.maps.MapTypeControlStyle.DROPDOWN
+    }
+});
+
+
+// 헥사곤 채우기 
+function calHexaAll(latlng){
+
+    var getZoom = map.getZoom()
+
+var height = 500 / 1000 ; // km
+var degree = [180]; // down 
+var resultArr = []  // result
+
+/// 각 zoom 당 최적값 
+// 10 : 140, 41
+// 11 : 69, 21
+// 12 : 34 11
+// 13 : 17 6
+var zoomDrawArray = [{x: 140, y:41}, {x: 69, y:21}, {x: 34, y:11}, {x: 17, y:6}]
+var drawX = 17  // right X
+var drawY = 6 // down X
+
+
+switch (getZoom) {
+    case 10:
+        drawX = zoomDrawArray[0].x
+        drawY = zoomDrawArray[0].y
+        break;
+        case 11:
+        drawX = zoomDrawArray[1].x
+        drawY = zoomDrawArray[1].y
+        
+        break;
+        case 12:
+        drawX = zoomDrawArray[2].x
+        drawY = zoomDrawArray[2].y
+        
+        break;
+        case 13:
+        drawX = zoomDrawArray[3].x
+        drawY = zoomDrawArray[3].y
+        
+        break;
+    default:
+        drawX = zoomDrawArray[3].x
+        drawY = zoomDrawArray[3].y
+
+}
+
+var options = {units: 'kilometers'}; //키로미터
+var centerMain = turf.point([latlng.lng, latlng.lat]);
+
+var bounds = map.getBounds()
+var leftUpLatLng = {lat: bounds._max.y, lng: bounds._min.x}
+var centerReviseMain = turf.point([leftUpLatLng.lng, leftUpLatLng.lat]);
+
+resultArr.push(makeNaverJson(createHexagon(leftUpLatLng, radius))); // 시작점 그리기 
+
+
+    for(var i = 0 ; i < degree.length ; i++){
+
+        // 아래로 그리기 
+        for(var j = 0 ; j < drawY ; j++){
+            
+            // 아래로 그리기
+            var heightNow =  height * 3 * (j+1) ;
+            var locationDown = turf.destination(centerReviseMain, heightNow, degree[i], options);
+            var resultDown = {lat: locationDown.geometry.coordinates[1], lng:locationDown.geometry.coordinates[0]}
+            resultArr.push(makeNaverJson(createHexagon(resultDown, radius)));     
+
+            // alpha: 오른쪽으로 그리기 위한 기초 좌표 1, 2
+            var moveXYArray = [triangleHeight * 2 / 1000, triangleHeight * 4 / 1000]  // 30도 각도로 오른쪽 위에 찍을 좌표 계산
+            
+            for(var z = 0 ; z < moveXYArray.length; z++){
+                var centerXY = turf.point([resultDown.lng, resultDown.lat]);
+                var startXY = turf.destination(centerXY, moveXYArray[z], 30, options); // 이동
+                var startXYlatlng = {lat: startXY.geometry.coordinates[1], lng: startXY.geometry.coordinates[0]}       
+
+                // 오른쪽 첫번째 그리는 부분
+                resultArr.push(makeNaverJson(createHexagon(startXYlatlng, radius)))
+                
+                // alpha: 나머지 오른쪽으로 그리기
+                for(var k = 0 ; k < drawX ; k++){
+                        
+                    var moveX = (triangleHeight *2 /1000) * (k+1)
+                    
+                    var centerX = turf.point([startXYlatlng.lng, startXYlatlng.lat]);
+                    var realX = turf.destination(centerX, moveX, 90, options); // 오른쪽으로 이동
+                    var result2 = {lat: realX.geometry.coordinates[1], lng: realX.geometry.coordinates[0]}
+                    
+                    resultArr.push(makeNaverJson(createHexagon(result2, radius)))
+                    
+
+                }
+            }
+            
+        }        
+    }
+    return resultArr
+}
+
+
+
+// 헥사곤 좌표 생성 
+function createHexagon(center,radius) {
+    var centerp = turf.point([center.lng, center.lat]);
+    var points = [];
+    var options = {units: 'kilometers'}; //키로미터 
+
+    points.push(turf.destination(centerp, radius, 0, options));
+    points.push(turf.destination(centerp, radius, 60, options));
+    points.push(turf.destination(centerp, radius, 120, options));
+    points.push(turf.destination(centerp, radius, 180, options));
+    points.push(turf.destination(centerp, radius, -120, options));
+    points.push(turf.destination(centerp, radius, -60, options));
+
+    return points;
+}
+
+
+// 네이버 json 생성 
+function makeNaverJson(hexJson){
+    var naverArray = []
+    
+    for(var i=0; i < hexJson.length ;i++){
+        naverArray.push(new naver.maps.LatLng(hexJson[i].geometry.coordinates[1], hexJson[i].geometry.coordinates[0]))
+    }
+    
+    return naverArray
+}
+
+
+// naver 최종 폴리곤 적용 
+function polygonFunc(str, index){
+   return new naver.maps.Polygon(
+    {
+        map: map,
+        key: index,
+        paths: [
+            str        
+        ],
+        fillColor: '#85B4EC',
+        fillOpacity: 0.3,
+        strokeColor: '#3D8CEA',
+        strokeOpacity: 0.6,
+        strokeWeight: 1,
+        clickable: true,
+    }
+);
+}
+
+
+//툴팁 준비 
+//https://navermaps.github.io/maps.js.ncp/docs/tutorial-2-datalayer-region.example.html
+var tooltip = $('<div style="position:absolute;z-index:1000;padding:5px 10px;background-color:#fff;border:solid 2px #000;font-size:14px;pointer-events:none;display:none;"></div>');
+tooltip.appendTo(map.getPanes().floatPane);
+
+var resultArray = []
+
+function ready(centerMap){
+
+    // 각 헥사곤 저장 
+   
+    
+    // 헥사곤으로 도배 
+    var hexagonArray = calHexaAll(centerMap)
+    console.log(hexagonArray)
+
+    var index = 0
+    hexagonArray.map((it) =>{
+        // 헥사곤 키값 
+        resultArray.push(polygonFunc(it,index))
+        index++;
+    })
+
+    // 클릭 이벤트를 위한 스크립트 
+    resultArray.map((it) =>{
+        // https://navermaps.github.io/maps.js.ncp/docs/naver.maps.Polygon.html
+        // https://navermaps.github.io/maps.js.ncp/docs/tutorial-3-event-overlay.example.html
+        naver.maps.Event.addListener(it, "mouseover", function(e) {
+            //map.setCursor("pointer");
+
+            // 툴팁
+            tooltip.css({
+                display: '',
+                left: e.offset.x,
+                top: e.offset.y
+            }).text(e);
+
+            // key value => 이걸로 특정 구역 헥사테이블과 매칭 
+            console.log(e.overlay.key)
+            // 좌표 
+            console.log(e.coord.x)
+            console.log(e.coord.y)
+
+            
+            it.setOptions({
+                fillOpacity: 0.8
+            });
+        });
+
+        naver.maps.Event.addListener(it, "mouseout", function(e) {
+            map.setCursor("auto");
+
+            tooltip.css({
+                    display: 'none'
+                })
+            it.setOptions({
+                fillOpacity: 0.35
+            });
+        });
+    });
+}
+
+
+// start
+ready({lat: 37.5665, lng : 126.9780});
+
+function reDraw(){
+    var newCenter = {lat: map.getCenter().y, lng : map.getCenter().x};
+    resultArray.map( it =>{
+        it.setMap(null)
+    })
+    ready(newCenter);  
+
+}
+
+// zoom event
+naver.maps.Event.addListener(map, 'zoom_changed', function(zoom) {
+        console.log('//'+zoom)
+        console.log('==> ', map.getCenter())
+        reDraw()
+    });
+
+// 지도 중앙점 반환
+naver.maps.Event.addListener(map, 'dragend', function(e) {
+    reDraw()
+
+});
+
+/**
+ * zoom 은 12 가 한계 
+ * 
+*/
+
+</script>
+</body>
+</html>
